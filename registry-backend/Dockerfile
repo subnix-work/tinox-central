@@ -6,35 +6,19 @@
 #   cd src && tinox build PackageController.tnx -o ../registry-backend
 #   docker build -t tinox-central-registry-backend .
 #
-# `FROM scratch` for the final image: the compiled binary's only runtime
-# deps are glibc/gc/openssl/zlib/brotli/zstd (confirmed via `ldd` on a
-# local build, see paths below) -- no shell, package manager or anything
-# else is needed at runtime, so there's no reason to ship a whole distro
-# for a single statically-linkable-except-for-these-six-.so's binary.
-# The `libs` stage exists purely to extract those exact files from the
-# same distro (Arch) the binary was linked against, to avoid a glibc
-# symbol-version mismatch against e.g. Debian's older glibc.
+# Runtime base: archlinux:base, the same distro the binary was linked
+# against (avoids a glibc symbol-version mismatch a smaller/older distro's
+# libc could hit) -- swapped from the earlier `FROM scratch` (single
+# static-except-six-.so's binary, no shell at all) specifically so
+# `docker exec -it <container> bash` works for debugging (`scratch` has
+# no /bin/*, `docker exec`/nsenter -a land nowhere). Deliberate tradeoff:
+# real base-image attack surface and a much bigger image now, in exchange
+# for that.
 
-FROM archlinux:base AS libs
-RUN pacman -Sy --noconfirm --needed gc openssl zlib brotli zstd \
-    && install -d -o 65532 -g 65532 /data-empty
+FROM archlinux:base
 
-FROM scratch
-
-COPY --from=libs /usr/lib64/ld-linux-x86-64.so.2 /lib64/ld-linux-x86-64.so.2
-COPY --from=libs \
-    /usr/lib/libc.so.6 \
-    /usr/lib/libm.so.6 \
-    /usr/lib/libgc.so.1 \
-    /usr/lib/libz.so.1 \
-    /usr/lib/libssl.so.3 \
-    /usr/lib/libcrypto.so.3 \
-    /usr/lib/libbrotlienc.so.1 \
-    /usr/lib/libbrotlidec.so.1 \
-    /usr/lib/libbrotlicommon.so.1 \
-    /usr/lib/libzstd.so.1 \
-    /usr/lib/
-COPY --from=libs --chown=65532:65532 /data-empty /data
+RUN pacman -Sy --noconfirm --needed gc openssl zlib brotli zstd bash \
+    && install -d -o 65532 -g 65532 /data
 
 COPY registry-backend /usr/local/bin/registry-backend
 
