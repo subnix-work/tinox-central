@@ -1,0 +1,187 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* ---- Design tokens: dark, glassy, neon-accented -------------------- */
+html {
+    --lumo-base-color: #070b14;
+    --lumo-body-text-color: #e2e8f0;
+    --lumo-secondary-text-color: #93a4bd;
+
+    --lumo-primary-color: #22d3ee;
+    --lumo-primary-color-50pct: rgba(34, 211, 238, 0.5);
+    --lumo-primary-color-10pct: rgba(34, 211, 238, 0.12);
+    --lumo-primary-text-color: #67e8f9;
+    --lumo-primary-contrast-color: #041018;
+
+    --lumo-error-color: #fb7185;
+    --lumo-success-color: #34d399;
+
+    --lumo-font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    --lumo-border-radius-m: 10px;
+    --lumo-border-radius-l: 16px;
+
+    --tinox-accent-2: #a78bfa;
+    --tinox-glass: rgba(17, 25, 43, 0.6);
+    --tinox-glass-border: rgba(103, 232, 249, 0.16);
+
+    color-scheme: dark;
+}
+
+body {
+    margin: 0;
+    min-height: 100vh;
+    background:
+        radial-gradient(60rem 32rem at 12% -10%, rgba(34, 211, 238, 0.14), transparent 60%),
+        radial-gradient(50rem 30rem at 110% 10%, rgba(167, 139, 250, 0.12), transparent 55%),
+        linear-gradient(180deg, #05070d 0%, #070b14 40%, #060910 100%);
+    background-attachment: fixed;
+}
+
+/* Faint HUD grid overlay behind every view */
+body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background-image:
+        linear-gradient(rgba(103, 232, 249, 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(103, 232, 249, 0.035) 1px, transparent 1px);
+    background-size: 40px 40px;
+    mask-image: radial-gradient(80% 60% at 50% 0%, black, transparent 75%);
+}
+
+/* ---- Page shell ------------------------------------------------------ */
+.tinox-shell {
+    position: relative;
+    z-index: 1;
+    box-sizing: border-box;
+    padding: 2.5rem clamp(1.25rem, 4vw, 4rem);
+    gap: 1.5rem;
+}
+
+.tinox-header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.tinox-title {
+    margin: 0;
+    font-family: 'Space Grotesk', 'JetBrains Mono', var(--lumo-font-family);
+    font-weight: 700;
+    font-size: clamp(1.75rem, 2.4vw, 2.4rem);
+    letter-spacing: 0.01em;
+    background: linear-gradient(120deg, #f8fafc 0%, #67e8f9 55%, #a78bfa 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+
+.tinox-subtitle {
+    margin: 0;
+    color: var(--lumo-secondary-text-color);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.85rem;
+    letter-spacing: 0.02em;
+}
+
+.tinox-subtitle::before {
+    content: '> ';
+    color: var(--lumo-primary-text-color);
+}
+
+/* ---- Glass surfaces (search bar, grids) ------------------------------ */
+.tinox-surface {
+    background: var(--tinox-glass);
+    border: 1px solid var(--tinox-glass-border);
+    border-radius: var(--lumo-border-radius-l);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2), 0 20px 60px -30px rgba(34, 211, 238, 0.25);
+    padding: 0.25rem;
+    overflow: hidden;
+}
+
+vaadin-text-field.tinox-search {
+    --lumo-contrast-10pct: rgba(148, 163, 184, 0.14);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+vaadin-text-field.tinox-search::part(input-field) {
+    background: rgba(15, 23, 42, 0.55);
+    border: 1px solid var(--tinox-glass-border);
+    border-radius: var(--lumo-border-radius-m);
+}
+
+vaadin-text-field.tinox-search::part(input-field):focus-within {
+    border-color: var(--lumo-primary-color);
+    box-shadow: 0 0 0 3px var(--lumo-primary-color-10pct);
+}
+
+/* ---- Grid ------------------------------------------------------------- */
+vaadin-grid {
+    background: transparent;
+    border: none;
+    font-family: 'Inter', var(--lumo-font-family);
+}
+
+vaadin-grid::part(header-cell) {
+    background: rgba(34, 211, 238, 0.05);
+    color: var(--lumo-primary-text-color);
+    text-transform: uppercase;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    border-bottom: 1px solid rgba(103, 232, 249, 0.2);
+}
+
+vaadin-grid::part(cell) {
+    border-bottom: 1px solid rgba(148, 163, 184, 0.07);
+}
+
+vaadin-grid::part(row):hover {
+    background: rgba(34, 211, 238, 0.055);
+}
+
+vaadin-grid::part(body-cell) {
+    color: var(--lumo-body-text-color);
+}
+
+/* ---- Links styled as pill "chips" ------------------------------------ */
+.tinox-surface a,
+vaadin-grid a {
+    color: var(--lumo-primary-text-color);
+    text-decoration: none;
+    font-weight: 500;
+}
+
+vaadin-grid vaadin-grid-cell-content a {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.2rem 0.7rem;
+    border-radius: 999px;
+    border: 1px solid rgba(103, 232, 249, 0.28);
+    background: rgba(34, 211, 238, 0.06);
+    transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+vaadin-grid vaadin-grid-cell-content a:hover {
+    background: rgba(34, 211, 238, 0.16);
+    border-color: var(--lumo-primary-color);
+    box-shadow: 0 0 16px -2px rgba(34, 211, 238, 0.55);
+}
+
+/* ---- Notifications, misc ----------------------------------------------- */
+vaadin-notification-card {
+    background: var(--tinox-glass);
+    border: 1px solid var(--tinox-glass-border);
+    color: var(--lumo-body-text-color);
+    backdrop-filter: blur(14px);
+}
+
+.tinox-empty {
+    color: var(--lumo-secondary-text-color);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.9rem;
+}

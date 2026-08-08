@@ -1,0 +1,4 @@
+[package]
+name = "tinox-central-registry"
+version = "0.1.0"
+description = "Central package registry REST API for the tinox ecosystem (see ../PLAN.md)"

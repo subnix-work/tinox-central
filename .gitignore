@@ -1,0 +1,13 @@
+.env
+
+# tinox build artifacts
+registry-backend/registry-backend
+registry-backend/**/*.ll
+registry-backend/**/.tinox_tmp_*
+registry-backend/**/.tinox_test_*
+registry-backend/data/
+
+# Maven/Quarkus build output
+registry-frontend/target/
+registry-frontend/src/main/frontend/generated/
+registry-frontend/src/main/frontend/node_modules/

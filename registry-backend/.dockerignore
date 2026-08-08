@@ -1,0 +1,7 @@
+.tinox_tmp_*
+.tinox_test_*
+*.ll
+tests/
+data/
+src/
+tinox.toml

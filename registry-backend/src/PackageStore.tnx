@@ -1,0 +1,357 @@
+import tinox.core.fs;
+import tinox.core.json;
+import tinox.core.base64;
+import tinox.core.validation;
+import tinox.core.time;
+import tinox.core.env;
+import PackageMeta;
+import PackageSummary;
+
+// Filesystem-backed storage (no SQL module in tinox's stdlib -- see
+// PLAN.md 4). Single source of truth is the per-version JSON file under
+// index/; `catalog` is an in-memory cache rebuilt from disk at startup
+// and kept updated on publish, deliberately not a second persisted
+// representation of the same fact (see PLAN.md 4 / bug precedent
+// subnix-work/tinox#154).
+//
+// @ApplicationComponent instances are zero-allocated by the DI
+// container -- it never calls a constructor (confirmed the same way
+// examples/http3_rest_api/src/TaskController.tnx already documents this
+// for its own singleton), so `dataDir`/`catalog` start out null/empty
+// regardless of any `fn new()` this class might otherwise have. Real
+// setup happens lazily in ensureInit(), called at the top of every
+// public method, exactly like TaskController's own ensureInit().
+@ApplicationComponent
+class PackageStore
+{
+    var dataDir: String;
+    var catalog: List<PackageSummary>;
+    var initialized: Bool;
+
+    fn ensureInit() -> Nothing
+    {
+        if this.initialized
+        {
+            return;
+        }
+        var dir: String = Env::getVar("TINOX_CENTRAL_DATA_DIR");
+        if dir.len() == 0
+        {
+            dir = "/var/lib/tinox-central/data";
+        }
+        this.dataDir = dir;
+        this.catalog = [];
+        this.ensureDir(this.dataDir);
+        this.ensureDir(this.indexRoot());
+        this.ensureDir(this.artifactsRoot());
+        this.rebuildCatalog();
+        this.initialized = true;
+    }
+
+    // Fs::createDirectory (mkdir) is neither recursive NOR does it error
+    // visibly if the parent doesn't exist yet -- it just silently does
+    // nothing (return value is void/ignored in the runtime). Confirmed by
+    // spike: PackageStore::create() on a dataDir whose grandparent didn't
+    // already exist yet silently created *nothing* at all, and every
+    // subsequent read/write against that tree failed just as silently.
+    // So every ancestor has to be created explicitly, one level at a
+    // time, from the root down. `dataDir` (and therefore `path` here) is
+    // always expected to be an absolute path -- this does not handle a
+    // relative path correctly (see the leading "/" handling below).
+    fn ensureDir(path: String) -> Nothing
+    {
+        let segments: List<String> = path.split("/");
+        var current: String = "";
+        var i: Int64 = 0;
+        while i < segments.len()
+        {
+            let seg: String = segments[i];
+            if seg.len() > 0
+            {
+                current = current + "/" + seg;
+                Fs::createDirectory(current);
+            }
+            i = i + 1;
+        }
+    }
+
+    fn indexRoot() -> String
+    {
+        return this.dataDir + "/index";
+    }
+
+    fn artifactsRoot() -> String
+    {
+        return this.dataDir + "/artifacts";
+    }
+
+    fn packageIndexDir(group: String, artifactId: String) -> String
+    {
+        return this.indexRoot() + "/" + group + "/" + artifactId;
+    }
+
+    fn versionIndexFile(group: String, artifactId: String, version: String) -> String
+    {
+        return this.packageIndexDir(group, artifactId) + "/" + version + ".json";
+    }
+
+    fn packageArtifactDir(group: String, artifactId: String) -> String
+    {
+        return this.artifactsRoot() + "/" + group + "/" + artifactId;
+    }
+
+    fn versionArtifactDir(group: String, artifactId: String, version: String) -> String
+    {
+        return this.packageArtifactDir(group, artifactId) + "/" + version;
+    }
+
+    // Artifact bytes are stored base64-encoded on disk, not raw -- same
+    // NUL-truncation reason as the wire format (PLAN.md 7.1).
+    fn artifactFile(meta: PackageMeta) -> String
+    {
+        return this.versionArtifactDir(meta.group, meta.artifactId, meta.version) + "/" + meta.filename + ".b64";
+    }
+
+    // Hard gate against path traversal: group/artifactId/version are used
+    // directly as filesystem path segments. Reject anything outside this
+    // allowlist outright rather than trying to sanitize it.
+    //
+    // The character-class regex alone is NOT enough: "." and ".." consist
+    // entirely of allowed characters (dots) but are filesystem-special --
+    // confirmed by spike that a version of literally ".." was rejected
+    // only because the HTTP layer's own path normalization happened to
+    // collapse it before routing ever reached this check, not because
+    // this regex caught it. Relying on that incidental upstream behavior
+    // would be fragile; reject "." and ".." explicitly regardless.
+    fnc isValidSegment(s: String) -> Bool
+    {
+        if s.len() == 0
+        {
+            return false;
+        }
+        if s == "." || s == ".."
+        {
+            return false;
+        }
+        return Validation::matchesPattern(s, "^[a-zA-Z0-9._-]+$");
+    }
+
+    // sha256Bytes(List<Int64>) -> List<Int64> is a raw runtime builtin
+    // (used internally by tinox.core.amqp10's SCRAM auth) -- deliberately
+    // NOT Crypto::sha256(String), which is strlen-based and would
+    // silently mis-hash any content with an embedded 0x00 (PLAN.md 7.1/
+    // the "5. API design" sha256 note). Hex::encode is String-based and
+    // has the same problem, so the digest is hex-encoded by hand here.
+    fnc bytesToHex(data: List<Int64>) -> String
+    {
+        let alphabet: String = "0123456789abcdef";
+        var result: String = "";
+        var i: Int64 = 0;
+        while i < data.len()
+        {
+            let b: Int64 = data[i];
+            let high: Int64 = (b >> 4) & 15;
+            let low: Int64 = b & 15;
+            result = result + alphabet.substring(high, high + 1) + alphabet.substring(low, low + 1);
+            i = i + 1;
+        }
+        return result;
+    }
+
+    fn versionExists(group: String, artifactId: String, version: String) -> Bool
+    {
+        this.ensureInit();
+        return fileExists(this.versionIndexFile(group, artifactId, version));
+    }
+
+    fn packageExists(group: String, artifactId: String) -> Bool
+    {
+        this.ensureInit();
+        return fileExists(this.packageIndexDir(group, artifactId));
+    }
+
+    // Caller (PackageController) is responsible for validating
+    // group/artifactId/version (isValidSegment) and duplicate-version
+    // (versionExists) before calling this -- this only throws for
+    // genuinely exceptional storage-layer conditions.
+    fn publish(group: String, artifactId: String, version: String, filename: String, contentBase64: String) -> PackageMeta
+    {
+        this.ensureInit();
+        let bytes: List<Int64> = Base64::decodeBytes(contentBase64);
+        if bytes.len() == 0
+        {
+            throw "PackageStore::publish: empty artifact content";
+        }
+
+        let digest: List<Int64> = sha256Bytes(bytes);
+        let sha256Hex: String = PackageStore::bytesToHex(digest);
+
+        this.ensureDir(this.packageIndexDir(group, artifactId));
+        this.ensureDir(this.packageArtifactDir(group, artifactId));
+        this.ensureDir(this.versionArtifactDir(group, artifactId, version));
+
+        let meta: PackageMeta = PackageMeta {
+            group: group,
+            artifactId: artifactId,
+            version: version,
+            filename: filename,
+            sha256: sha256Hex,
+            sizeBytes: bytes.len(),
+            publishedAt: Time::now()
+        };
+
+        Fs::writeFile(this.artifactFile(meta), contentBase64);
+        Fs::writeFile(this.versionIndexFile(group, artifactId, version), Json::serialize(meta));
+
+        this.updateCatalog(meta);
+        return meta;
+    }
+
+    // Throws if the exact version doesn't exist -- callers check
+    // versionExists() first when they need a 404 instead of a hard error.
+    fn getMeta(group: String, artifactId: String, version: String) -> PackageMeta
+    {
+        this.ensureInit();
+        let path: String = this.versionIndexFile(group, artifactId, version);
+        if !fileExists(path)
+        {
+            throw "PackageStore::getMeta: not found";
+        }
+        return Json::deserialize<PackageMeta>(Fs::readFile(path));
+    }
+
+    fn getArtifactBase64(meta: PackageMeta) -> String
+    {
+        this.ensureInit();
+        return Fs::readFile(this.artifactFile(meta));
+    }
+
+    // Empty list (not a throw) when the package doesn't exist at all --
+    // caller distinguishes "no such package" from "package with 0
+    // versions" (the latter can't actually happen, but this keeps the
+    // 404-vs-empty-array decision in the controller, not buried here).
+    //
+    // Public entry point: ensureInit() then delegates to
+    // readVersionsFromDisk(). Kept separate because rebuildCatalog()/
+    // updateCatalog() -- both called FROM WITHIN ensureInit() itself --
+    // also need the disk-walk, and calling back into a
+    // this.ensureInit()-guarded method from inside ensureInit(), before
+    // `initialized` is set, would recurse forever.
+    fn listVersions(group: String, artifactId: String) -> List<PackageMeta>
+    {
+        this.ensureInit();
+        return this.readVersionsFromDisk(group, artifactId);
+    }
+
+    fn readVersionsFromDisk(group: String, artifactId: String) -> List<PackageMeta>
+    {
+        var result: List<PackageMeta> = [];
+        let dir: String = this.packageIndexDir(group, artifactId);
+        if !fileExists(dir)
+        {
+            return result;
+        }
+        let entries: List<String> = Fs::listDirectory(dir);
+        var i: Int64 = 0;
+        while i < entries.len()
+        {
+            let name: String = entries[i];
+            if name.endsWith(".json")
+            {
+                result.push(Json::deserialize<PackageMeta>(Fs::readFile(dir + "/" + name)));
+            }
+            i = i + 1;
+        }
+        return result;
+    }
+
+    fn catalogList() -> List<PackageSummary>
+    {
+        this.ensureInit();
+        return this.catalog;
+    }
+
+    // Walks index/<group>/<artifactId>/<version>.json (a fixed 3-level
+    // shape this store always creates itself, see publish()) to rebuild
+    // the in-memory catalog from disk at startup.
+    fn rebuildCatalog() -> Nothing
+    {
+        var newCatalog: List<PackageSummary> = [];
+        let root: String = this.indexRoot();
+        if !fileExists(root)
+        {
+            this.catalog = newCatalog;
+            return;
+        }
+        let groups: List<String> = Fs::listDirectory(root);
+        var gi: Int64 = 0;
+        while gi < groups.len()
+        {
+            let group: String = groups[gi];
+            let artifactIds: List<String> = Fs::listDirectory(root + "/" + group);
+            var ai: Int64 = 0;
+            while ai < artifactIds.len()
+            {
+                let artifactId: String = artifactIds[ai];
+                let versions: List<PackageMeta> = this.readVersionsFromDisk(group, artifactId);
+                if versions.len() > 0
+                {
+                    newCatalog.push(PackageStore::summarize(group, artifactId, versions));
+                }
+                ai = ai + 1;
+            }
+            gi = gi + 1;
+        }
+        this.catalog = newCatalog;
+    }
+
+    fnc summarize(group: String, artifactId: String, versions: List<PackageMeta>) -> PackageSummary
+    {
+        var latest: PackageMeta = versions[0];
+        var i: Int64 = 1;
+        while i < versions.len()
+        {
+            if versions[i].publishedAt > latest.publishedAt
+            {
+                latest = versions[i];
+            }
+            i = i + 1;
+        }
+        return PackageSummary {
+            group: group,
+            artifactId: artifactId,
+            latestVersion: latest.version,
+            versionCount: versions.len(),
+            latestPublishedAt: latest.publishedAt
+        };
+    }
+
+    // Updates (or inserts) this package's entry in the in-memory catalog
+    // after a successful publish, instead of a full rebuildCatalog() disk
+    // walk on every request.
+    fn updateCatalog(meta: PackageMeta) -> Nothing
+    {
+        let versions: List<PackageMeta> = this.readVersionsFromDisk(meta.group, meta.artifactId);
+        if versions.len() == 0
+        {
+            // Should be unreachable (publish() just wrote this exact
+            // version's index file before calling updateCatalog) -- not
+            // silently swallowed, so a real storage-layer inconsistency
+            // surfaces immediately instead of as a confusing empty catalog.
+            throw "PackageStore::updateCatalog: no versions found for " + meta.group + ":" + meta.artifactId + " right after publishing " + meta.version;
+        }
+        let summary: PackageSummary = PackageStore::summarize(meta.group, meta.artifactId, versions);
+
+        var i: Int64 = 0;
+        while i < this.catalog.len()
+        {
+            if this.catalog[i].group == meta.group && this.catalog[i].artifactId == meta.artifactId
+            {
+                this.catalog[i] = summary;
+                return;
+            }
+            i = i + 1;
+        }
+        this.catalog.push(summary);
+    }
+}

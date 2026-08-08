@@ -1,0 +1,14 @@
+import tinox.core.json;
+
+// Response shape for GET download -- base64-wrapped, not raw bytes in the
+// body (see PLAN.md 7.1: Tinox's String is internally a NUL-terminated
+// C string, so raw binary artifact bytes cannot be carried directly in
+// an HttpResponse body without silent truncation at the first 0x00).
+@JsonSerializable
+class ArtifactPayload
+{
+    var filename: String;
+    var sha256: String;
+    var sizeBytes: Int64;
+    var contentBase64: String;
+}

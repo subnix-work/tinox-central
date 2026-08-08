@@ -1,0 +1,44 @@
+import tinox.core.env;
+
+// Compiler-discovered by name for @Auth-protected routes in the
+// annotation-driven (auto-generated-main) compilation mode -- must be
+// imported from wherever the entry point's import graph is rooted
+// (confirmed by spike: silently rejects every @Auth request if this
+// class exists but was never pulled into the compiled program via an
+// import chain). Without this class at all, every @Auth route rejects
+// everything by default (safe-by-default, not silently open).
+class AuthValidator
+{
+    fnc validate(authType: String, credential: String) -> Bool
+    {
+        if authType != "bearer"
+        {
+            return false;
+        }
+        let expected: String = Env::getVar("TINOX_CENTRAL_ADMIN_KEY");
+        if expected.len() == 0
+        {
+            return false; // fail closed if unset, never silently open
+        }
+        return AuthValidator::constantTimeEquals(credential, expected);
+    }
+
+    // No timing-safe compare exists in tinox's stdlib yet (checked
+    // Crypto/Hash modules) -- always compares the full length regardless
+    // of an early mismatch, unlike a short-circuiting `==`.
+    fnc constantTimeEquals(a: String, b: String) -> Bool
+    {
+        if a.len() != b.len()
+        {
+            return false;
+        }
+        var diff: Int64 = 0;
+        var i: Int64 = 0;
+        while i < a.len()
+        {
+            diff = diff | (a.charCodeAt(i) ^ b.charCodeAt(i));
+            i = i + 1;
+        }
+        return diff == 0;
+    }
+}

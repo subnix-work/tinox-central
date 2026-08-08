@@ -1,0 +1,13 @@
+import tinox.core.json;
+
+@JsonSerializable
+class PackageMeta
+{
+    var group: String;
+    var artifactId: String;
+    var version: String;
+    var filename: String;
+    var sha256: String;
+    var sizeBytes: Int64;
+    var publishedAt: Int64;
+}

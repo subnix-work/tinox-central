@@ -1,0 +1,40 @@
+# Brings up the full tinox-central registry: backend (tinox) + frontend
+# (Quarkus/Vaadin), talking to each other over the compose-managed
+# network by service name (see registry-frontend's REGISTRY_BACKEND_URL).
+#
+# One-time prerequisite before the first `docker compose up --build`:
+# the backend's Dockerfile is runtime-only (see registry-backend/Dockerfile
+# for why -- the tinox compiler toolchain itself isn't containerizable
+# here yet), so the binary has to be built on the host first:
+#
+#   cd registry-backend/src && tinox build PackageController.tnx -o ../registry-backend
+#
+# The frontend, by contrast, builds itself from source inside Docker --
+# no host pre-build needed for it.
+#
+# Also requires a TINOX_CENTRAL_ADMIN_KEY -- copy .env.example to .env
+# and set a real value there (never commit .env).
+
+services:
+  backend:
+    build: ./registry-backend
+    environment:
+      TINOX_CENTRAL_ADMIN_KEY: ${TINOX_CENTRAL_ADMIN_KEY:?set TINOX_CENTRAL_ADMIN_KEY in .env, see .env.example}
+    volumes:
+      - registry-data:/data
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  frontend:
+    build: ./registry-frontend
+    environment:
+      REGISTRY_BACKEND_URL: http://backend:8080
+    depends_on:
+      - backend
+    ports:
+      - "8082:8082"
+    restart: unless-stopped
+
+volumes:
+  registry-data:

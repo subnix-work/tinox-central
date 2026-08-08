@@ -1,0 +1,11 @@
+import tinox.core.json;
+
+@JsonSerializable
+class PackageSummary
+{
+    var group: String;
+    var artifactId: String;
+    var latestVersion: String;
+    var versionCount: Int64;
+    var latestPublishedAt: Int64;
+}

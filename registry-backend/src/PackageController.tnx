@@ -1,0 +1,178 @@
+import tinox.core.rest.server;
+import tinox.core.json;
+import PackageStore;
+import PackageMeta;
+import PublishRequest;
+import ArtifactPayload;
+import AuthValidator;
+
+// Annotation-driven per the project's stated design preference
+// (declarative over hand-written imperative wiring). Requires the
+// compiler's auto-generated main() (no explicit RestApi/main anywhere in
+// this program) -- accepted tradeoff after user confirmation: the GC
+// crash this used to imply (subnix-work/tinox#140) is fixed, but a
+// smaller residual ~1-2% dropped-connection rate under heavy concurrent
+// bursts remains (subnix-work/tinox#175), vs. zero failures on the
+// manually-wired RestApi/HttpServer path this replaces.
+@ApplicationComponent
+@Path("/api/v1")
+class PackageController
+{
+    @Inject
+    var store: PackageStore;
+
+    @GET
+    @Path("/:group/:artifactId/:version")
+    @Produces("application/json")
+    fn download(ctx: HttpContext) -> Nothing
+    {
+        let group: String = ctx.request.getParam("group");
+        let artifactId: String = ctx.request.getParam("artifactId");
+        let version: String = ctx.request.getParam("version");
+
+        if !this.validSegments3(group, artifactId, version)
+        {
+            ctx.response.status(400).json("{\"error\":\"invalid group/artifactId/version\"}");
+            return;
+        }
+
+        if !this.store.versionExists(group, artifactId, version)
+        {
+            ctx.response.status(404).json("{\"error\":\"not found\"}");
+            return;
+        }
+
+        let meta: PackageMeta = this.store.getMeta(group, artifactId, version);
+        let payload: ArtifactPayload = ArtifactPayload {
+            filename: meta.filename,
+            sha256: meta.sha256,
+            sizeBytes: meta.sizeBytes,
+            contentBase64: this.store.getArtifactBase64(meta)
+        };
+        ctx.response.json(Json::serialize(payload));
+    }
+
+    @POST
+    @Path("/:group/:artifactId/:version")
+    @Auth("bearer")
+    @Consumes("application/json")
+    @Produces("application/json")
+    fn publish(ctx: HttpContext) -> Nothing
+    {
+        let group: String = ctx.request.getParam("group");
+        let artifactId: String = ctx.request.getParam("artifactId");
+        let version: String = ctx.request.getParam("version");
+
+        if !this.validSegments3(group, artifactId, version)
+        {
+            ctx.response.status(400).json("{\"error\":\"invalid group/artifactId/version\"}");
+            return;
+        }
+
+        if this.store.versionExists(group, artifactId, version)
+        {
+            ctx.response.status(409).json("{\"error\":\"version already exists\"}");
+            return;
+        }
+
+        // subnix-work/tinox#174: the runtime's HTTP request reader
+        // silently TRUNCATES (not rejects) any body over 4 MiB to
+        // whatever the client's own Content-Length header claimed --
+        // it never signals truncation to the handler. That means by the
+        // time we get here, ctx.request.body may already be a corrupted
+        // prefix of what the client actually sent, and checking ITS
+        // length can't detect that (a truncated-but-still-huge body
+        // looks "the right size" to a length check run after the fact).
+        // The only reliable signal is the client's ORIGINAL claimed
+        // Content-Length, which the runtime does not modify -- check
+        // that FIRST, before trusting anything about ctx.request.body.
+        let contentLengthHeader: String = ctx.request.getHeader("Content-Length");
+        if contentLengthHeader.len() > 0 && contentLengthHeader.toInt() > this.maxRequestBytes()
+        {
+            ctx.response.status(413).json("{\"error\":\"request too large\"}");
+            return;
+        }
+
+        let req: PublishRequest = Json::deserialize<PublishRequest>(ctx.request.body);
+        if req.contentBase64.len() == 0
+        {
+            ctx.response.status(400).json("{\"error\":\"empty content\"}");
+            return;
+        }
+        if req.filename.len() == 0
+        {
+            ctx.response.status(400).json("{\"error\":\"missing filename\"}");
+            return;
+        }
+
+        // Belt-and-suspenders on top of the Content-Length check above:
+        // base64 text is ~4/3 the size of the decoded bytes, so this
+        // also rejects (with the same status) anything that slipped
+        // through without a Content-Length header at all.
+        let approxDecodedBytes: Int64 = (req.contentBase64.len() * 3) / 4;
+        if approxDecodedBytes > this.maxArtifactBytes()
+        {
+            ctx.response.status(413).json("{\"error\":\"artifact too large\"}");
+            return;
+        }
+
+        let meta: PackageMeta = this.store.publish(group, artifactId, version, req.filename, req.contentBase64);
+        ctx.response.status(201).json(Json::serialize(meta));
+    }
+
+    @GET
+    @Path("/:group/:artifactId")
+    @Produces("application/json")
+    fn listVersions(ctx: HttpContext) -> Nothing
+    {
+        let group: String = ctx.request.getParam("group");
+        let artifactId: String = ctx.request.getParam("artifactId");
+
+        if !PackageStore::isValidSegment(group) || !PackageStore::isValidSegment(artifactId)
+        {
+            ctx.response.status(400).json("{\"error\":\"invalid group/artifactId\"}");
+            return;
+        }
+
+        if !this.store.packageExists(group, artifactId)
+        {
+            ctx.response.status(404).json("{\"error\":\"not found\"}");
+            return;
+        }
+
+        let versions: List<PackageMeta> = this.store.listVersions(group, artifactId);
+        ctx.response.json(Json::serialize(versions));
+    }
+
+    @GET
+    @Path("/packages")
+    @Produces("application/json")
+    fn catalog(ctx: HttpContext) -> Nothing
+    {
+        ctx.response.json(Json::serialize(this.store.catalogList()));
+    }
+
+    // subnix-work/tinox#174: the HTTP runtime silently truncates any
+    // request body over 4 MiB instead of rejecting it -- these caps must
+    // stay comfortably under that ceiling (not the size we'd actually
+    // want to allow) or we'd never detect the truncation at all. 2 MiB
+    // decoded artifact / 3 MiB total request leaves headroom for the
+    // base64 inflation (~4/3) plus the JSON envelope overhead while
+    // staying well clear of the runtime's 4 MiB cutoff.
+    fn maxArtifactBytes() -> Int64
+    {
+        return 2 * 1024 * 1024;
+    }
+
+    fn maxRequestBytes() -> Int64
+    {
+        return 3 * 1024 * 1024;
+    }
+
+    fn validSegments3(group: String, artifactId: String, version: String) -> Bool
+    {
+        return PackageStore::isValidSegment(group)
+            && PackageStore::isValidSegment(artifactId)
+            && PackageStore::isValidSegment(version);
+    }
+}

@@ -1,0 +1,13 @@
+.git
+src/main/frontend/generated
+src/main/frontend/node_modules
+
+# The self-building root Dockerfile doesn't need any of target/ (it
+# rebuilds from source inside the image), but src/main/docker/Dockerfile.*
+# still expect a host-built target/quarkus-app / *-runner, so keep those
+# reachable.
+target/*
+!target/quarkus-app
+!target/quarkus-app/**
+!target/*-runner
+!target/*-runner.jar
