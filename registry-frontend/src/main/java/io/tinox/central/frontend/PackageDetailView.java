@@ -1,8 +1,11 @@
 package io.tinox.central.frontend;
 
+import com.vaadin.flow.component.button.Button;
+import com.vaadin.flow.component.dialog.Dialog;
 import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.html.Anchor;
 import com.vaadin.flow.component.html.Div;
+import com.vaadin.flow.component.html.IFrame;
 import com.vaadin.flow.component.html.Paragraph;
 import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
@@ -77,6 +80,14 @@ public class PackageDetailView extends VerticalLayout implements BeforeEnterObse
             link.getElement().setAttribute("download", true);
             return link;
         }).setHeader("");
+        String finalGroup = group;
+        String finalArtifactId = artifactId;
+        grid.addComponentColumn(m -> {
+            Button docsButton = new Button("Docs");
+            docsButton.addClassName("tinox-pill-button");
+            docsButton.addClickListener(e -> openDocs(finalGroup, finalArtifactId, m.version));
+            return docsButton;
+        }).setHeader("");
         grid.setItems(versions);
         grid.setAllRowsVisible(true);
         grid.setWidthFull();
@@ -86,6 +97,39 @@ public class PackageDetailView extends VerticalLayout implements BeforeEnterObse
         gridSurface.setWidthFull();
 
         add(gridSurface);
+    }
+
+    /** Opens the version's generated docs.html inline in an iframe dialog,
+     * instead of navigating away -- the registry stays the one tab open. Points
+     * at our own /docs-proxy/... (DocsProxyResource), NOT raw.githubusercontent.com
+     * directly -- confirmed live that GitHub's raw content sends
+     * X-Frame-Options: deny, which the browser enforces no matter what this
+     * page does, so embedding it straight is a dead end. The proxy re-fetches
+     * server-side and re-serves same-origin, which has no such header. */
+    private void openDocs(String group, String artifactId, String version) {
+        Dialog dialog = new Dialog();
+        dialog.setHeaderTitle(group + " / " + artifactId + " " + version + " -- docs");
+        dialog.addClassName("tinox-docs-dialog");
+        dialog.setWidth("92vw");
+        dialog.setHeight("90vh");
+        dialog.setResizable(true);
+        dialog.setDraggable(true);
+
+        String proxyPath = "/docs-proxy/" + encode(group) + "/" + encode(artifactId) + "/" + encode(version);
+        IFrame iframe = new IFrame(proxyPath);
+        iframe.setWidthFull();
+        iframe.setHeightFull();
+        iframe.getElement().getStyle().set("border", "none");
+        dialog.add(iframe);
+
+        Button close = new Button("Close", e -> dialog.close());
+        dialog.getFooter().add(close);
+
+        dialog.open();
+    }
+
+    private static String encode(String segment) {
+        return java.net.URLEncoder.encode(segment, java.nio.charset.StandardCharsets.UTF_8);
     }
 
     private static String formatSize(long bytes) {
