@@ -115,7 +115,10 @@ public class PackageDetailView extends VerticalLayout implements BeforeEnterObse
         dialog.setResizable(true);
         dialog.setDraggable(true);
 
-        String proxyPath = "/docs-proxy/" + encode(group) + "/" + encode(artifactId) + "/" + encode(version);
+        // Trailing /docs.html matters, not just cosmetic: see DocsProxyResource's
+        // own doc comment -- the served page's relative dependency links need
+        // this extra path level to resolve correctly.
+        String proxyPath = "/docs-proxy/" + encode(group) + "/" + encode(artifactId) + "/" + encode(version) + "/docs.html";
         IFrame iframe = new IFrame(proxyPath);
         iframe.setWidthFull();
         iframe.setHeightFull();

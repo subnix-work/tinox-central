@@ -17,6 +17,19 @@ import jakarta.ws.rs.core.Response;
  * Fetching it server-side here and returning it as our own response sidesteps
  * that: this response carries no such header, so the browser has no reason to
  * refuse it.
+ *
+ * Path MUST end in a literal /docs.html segment, not just
+ * /{group}/{artifactId}/{version} -- the served page's own Dependencies links
+ * are relative (`../../{artifactId}/{version}/docs.html`), written for the
+ * real 4-level GitHub layout (docs/tinox-core/<module>/<version>/docs.html).
+ * Without the trailing docs.html here, the browser has one directory level
+ * too few to resolve those against, and `../../` climbs past the group
+ * segment entirely -- confirmed live: decimal's "string" dependency link
+ * resolved to /docs-proxy/string/1-0-0/docs.html instead of
+ * /docs-proxy/tinox.core/string/1-0-0/docs.html, a 404. The literal
+ * "docs.html" segment's own text is irrelevant to the browser, only the
+ * extra path level matters -- but keeping the same name as the real file
+ * avoids the confusion of two different conventions.
  */
 @Path("/docs-proxy")
 public class DocsProxyResource {
@@ -25,7 +38,7 @@ public class DocsProxyResource {
     RegistryClient client;
 
     @GET
-    @Path("/{group}/{artifactId}/{version}")
+    @Path("/{group}/{artifactId}/{version}/docs.html")
     @Produces(MediaType.TEXT_HTML)
     public Response docs(@PathParam("group") String group,
                           @PathParam("artifactId") String artifactId,
